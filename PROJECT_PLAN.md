@@ -246,10 +246,10 @@ unreal-engine-agentic-control/
 - [x] Implement the Orchestrator Agent with delegation to the UE Editor Agent.
 - [x] Support single-step natural language commands (add / move / delete actors).
 
-### Phase 3 — Image Generation & Multi-Step Tasks
-- [ ] Implement the Image Gen Agent (Imagen 4).
-- [ ] Add MCP tools for asset import and material application.
-- [ ] Wire up the Orchestrator to coordinate multi-step workflows (generate → import → apply).
+### Phase 3 — Image Generation & Multi-Step Tasks ✅
+- [x] Implement the Image Gen Agent (Imagen 4).
+- [x] Add MCP tools for asset import and material application.
+- [x] Wire up the Orchestrator to coordinate multi-step workflows (generate → import → apply).
 
 ### Phase 4 — Polish & Extend
 - [ ] Add more MCP tools (lighting, camera, landscape, etc.).

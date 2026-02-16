@@ -33,7 +33,9 @@ ue_editor_agent = LlmAgent(
         "DirectionalLight, CameraActor, PlayerStart) at a position.\n"
         "- get_scene_info: Query all actors in the current scene.\n"
         "- delete_actor: Remove an actor by its ID.\n"
-        "- set_transform: Move, rotate, or scale an actor (partial updates supported).\n\n"
+        "- set_transform: Move, rotate, or scale an actor (partial updates supported).\n"
+        "- import_asset: Import a file from disk into the UE project as an asset.\n"
+        "- apply_material: Apply a texture as a material to an actor's mesh.\n\n"
         "Report results clearly and concisely."
     ),
     tools=[ue_editor_toolset],

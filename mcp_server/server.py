@@ -131,5 +131,41 @@ async def set_transform(
     return json.dumps(result)
 
 
+@mcp.tool
+async def import_asset(file_path: str, asset_name: str) -> str:
+    """Import an external file (e.g. a generated image) into the UE project as an asset.
+
+    Args:
+        file_path: Absolute path to the file on disk to import.
+        asset_name: Name for the imported asset inside UE (placed under /Game/Generated/).
+
+    Returns:
+        JSON string with import result including the UE asset path.
+    """
+    result = await send_command("import_asset", {
+        "file_path": file_path,
+        "asset_name": asset_name,
+    })
+    return json.dumps(result)
+
+
+@mcp.tool
+async def apply_material(actor_id: str, texture_asset_path: str) -> str:
+    """Apply a texture as a material to an actor's mesh.
+
+    Args:
+        actor_id: The ID (label) of the actor to apply the material to.
+        texture_asset_path: The UE asset path of the texture (e.g. /Game/Generated/my_texture).
+
+    Returns:
+        JSON string with the result including the created material path.
+    """
+    result = await send_command("apply_material", {
+        "actor_id": actor_id,
+        "texture_asset_path": texture_asset_path,
+    })
+    return json.dumps(result)
+
+
 if __name__ == "__main__":
     mcp.run()

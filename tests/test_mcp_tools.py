@@ -11,7 +11,7 @@ from fastmcp import Client
 from mcp_server.server import mcp
 
 
-def _mock_send_command(command: str, params: dict | None = None) -> dict:
+def _mock_send_command(command: str, params: dict | None = None) -> dict:  # noqa: C901
     """Return stub responses matching what the UE plugin would send."""
     if command == "spawn_actor":
         actor_type = params.get("actor_type", "Unknown") if params else "Unknown"
@@ -51,6 +51,20 @@ def _mock_send_command(command: str, params: dict | None = None) -> dict:
             },
         }
         return {"success": True, "actor_id": actor_id, "transform": transform}
+    elif command == "import_asset":
+        file_path = params.get("file_path", "") if params else ""
+        asset_name = params.get("asset_name", "") if params else ""
+        return {
+            "success": True,
+            "asset_path": f"/Game/Generated/{asset_name}",
+        }
+    elif command == "apply_material":
+        actor_id = params.get("actor_id", "") if params else ""
+        return {
+            "success": True,
+            "actor_id": actor_id,
+            "material_path": f"/Game/Generated/M_{actor_id}",
+        }
     return {"success": False, "error": "Unknown command"}
 
 
@@ -179,4 +193,39 @@ async def test_set_transform_full(mock_tcp):
         "scale_x": 2.0,
         "scale_y": 2.0,
         "scale_z": 2.0,
+    })
+
+
+@pytest.mark.asyncio
+async def test_import_asset(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("import_asset", {
+            "file_path": "/tmp/generated_images/brick_wall.png",
+            "asset_name": "brick_wall",
+        })
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["asset_path"] == "/Game/Generated/brick_wall"
+
+    mock_tcp.assert_called_once_with("import_asset", {
+        "file_path": "/tmp/generated_images/brick_wall.png",
+        "asset_name": "brick_wall",
+    })
+
+
+@pytest.mark.asyncio
+async def test_apply_material(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("apply_material", {
+            "actor_id": "Floor_1",
+            "texture_asset_path": "/Game/Generated/brick_wall",
+        })
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["actor_id"] == "Floor_1"
+        assert data["material_path"] == "/Game/Generated/M_Floor_1"
+
+    mock_tcp.assert_called_once_with("apply_material", {
+        "actor_id": "Floor_1",
+        "texture_asset_path": "/Game/Generated/brick_wall",
     })

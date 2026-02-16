@@ -19,7 +19,8 @@ public class AgenticControl : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"Json",
-			"JsonUtilities"
+			"JsonUtilities",
+			"AssetTools"
 		});
 	}
 }

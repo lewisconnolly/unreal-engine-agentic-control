@@ -17,6 +17,14 @@
 #include "EngineUtils.h"
 #include "Editor.h"
 #include "Async/Async.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "AutomatedAssetImportData.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionTextureSample.h"
+#include "Factories/TextureFactory.h"
+#include "Engine/Texture2D.h"
+#include "UObject/SavePackage.h"
 
 FAgenticControlServer::FAgenticControlServer(int32 InPort)
 	: Port(InPort)
@@ -277,6 +285,22 @@ FString FAgenticControlServer::HandleCommand(const FString& JsonCommand)
 		}
 		return TEXT("{\"success\":false,\"error\":\"Missing params for set_transform\"}");
 	}
+	else if (Command == TEXT("import_asset"))
+	{
+		if (JsonObject->TryGetObjectField(TEXT("params"), ParamsPtr) && ParamsPtr)
+		{
+			return HandleImportAsset(*ParamsPtr);
+		}
+		return TEXT("{\"success\":false,\"error\":\"Missing params for import_asset\"}");
+	}
+	else if (Command == TEXT("apply_material"))
+	{
+		if (JsonObject->TryGetObjectField(TEXT("params"), ParamsPtr) && ParamsPtr)
+		{
+			return HandleApplyMaterial(*ParamsPtr);
+		}
+		return TEXT("{\"success\":false,\"error\":\"Missing params for apply_material\"}");
+	}
 
 	return TEXT("{\"success\":false,\"error\":\"Unknown command\"}");
 }
@@ -536,6 +560,153 @@ FString FAgenticControlServer::HandleSetTransform(const TSharedPtr<FJsonObject>&
 		ResultJson = FString::Printf(
 			TEXT("{\"success\":true,\"actor_id\":\"%s\",\"transform\":%s}"),
 			*ActorId, *Transform);
+
+		DoneEvent->Trigger();
+	});
+
+	DoneEvent->Wait();
+	FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+
+	return ResultJson;
+}
+
+// ---------------------------------------------------------------------------
+// import_asset — imports a file from disk into /Game/Generated/
+// ---------------------------------------------------------------------------
+
+FString FAgenticControlServer::HandleImportAsset(const TSharedPtr<FJsonObject>& Params)
+{
+	FString FilePath;
+	Params->TryGetStringField(TEXT("file_path"), FilePath);
+
+	FString AssetName;
+	Params->TryGetStringField(TEXT("asset_name"), AssetName);
+
+	UE_LOG(LogTemp, Log, TEXT("AgenticControl: import_asset file=%s name=%s"), *FilePath, *AssetName);
+
+	FString ResultJson;
+	FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool();
+
+	AsyncTask(ENamedThreads::GameThread, [&ResultJson, FilePath, AssetName, DoneEvent]()
+	{
+		FString DestinationPath = FString::Printf(TEXT("/Game/Generated/%s"), *AssetName);
+
+		UAutomatedAssetImportData* ImportData = NewObject<UAutomatedAssetImportData>();
+		ImportData->Filenames.Add(FilePath);
+		ImportData->DestinationPath = TEXT("/Game/Generated");
+		ImportData->bReplaceExisting = true;
+
+		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+		TArray<UObject*> ImportedAssets = AssetTools.ImportAssetsAutomated(ImportData);
+
+		if (ImportedAssets.Num() > 0 && ImportedAssets[0])
+		{
+			FString AssetPath = ImportedAssets[0]->GetPathName();
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":true,\"asset_path\":\"%s\"}"), *AssetPath);
+		}
+		else
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Failed to import asset from: %s\"}"), *FilePath);
+		}
+
+		DoneEvent->Trigger();
+	});
+
+	DoneEvent->Wait();
+	FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+
+	return ResultJson;
+}
+
+// ---------------------------------------------------------------------------
+// apply_material — creates a material from a texture and applies to an actor
+// ---------------------------------------------------------------------------
+
+FString FAgenticControlServer::HandleApplyMaterial(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorId;
+	Params->TryGetStringField(TEXT("actor_id"), ActorId);
+
+	FString TextureAssetPath;
+	Params->TryGetStringField(TEXT("texture_asset_path"), TextureAssetPath);
+
+	UE_LOG(LogTemp, Log, TEXT("AgenticControl: apply_material actor=%s texture=%s"),
+		*ActorId, *TextureAssetPath);
+
+	FString ResultJson;
+	FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool();
+
+	AsyncTask(ENamedThreads::GameThread, [&ResultJson, ActorId, TextureAssetPath, DoneEvent]()
+	{
+		UWorld* World = GEditor->GetEditorWorldContext().World();
+		if (!World)
+		{
+			ResultJson = TEXT("{\"success\":false,\"error\":\"No editor world available\"}");
+			DoneEvent->Trigger();
+			return;
+		}
+
+		AActor* Actor = FindActorByLabel(World, ActorId);
+		if (!Actor)
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Actor not found: %s\"}"), *ActorId);
+			DoneEvent->Trigger();
+			return;
+		}
+
+		// Load the texture asset
+		UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, *TextureAssetPath);
+		if (!Texture)
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Texture not found: %s\"}"), *TextureAssetPath);
+			DoneEvent->Trigger();
+			return;
+		}
+
+		// Create a material package
+		FString MaterialName = FString::Printf(TEXT("M_%s"), *Actor->GetActorLabel());
+		FString MaterialPackagePath = FString::Printf(TEXT("/Game/Generated/%s"), *MaterialName);
+
+		UPackage* MaterialPackage = CreatePackage(*MaterialPackagePath);
+		UMaterial* Material = NewObject<UMaterial>(MaterialPackage, *MaterialName,
+			RF_Public | RF_Standalone);
+
+		// Create a texture sample expression and wire to base color
+		UMaterialExpressionTextureSample* TextureSample =
+			NewObject<UMaterialExpressionTextureSample>(Material);
+		TextureSample->Texture = Texture;
+		Material->GetEditorOnlyData()->ExpressionCollection.Expressions.Add(TextureSample);
+		Material->GetEditorOnlyData()->BaseColor.Expression = TextureSample;
+
+		Material->PreEditChange(nullptr);
+		Material->PostEditChange();
+
+		// Save the material package
+		FString PackageFilename = FPackageName::LongPackageNameToFilename(
+			MaterialPackagePath, FPackageName::GetAssetPackageExtension());
+		FSavePackageArgs SaveArgs;
+		SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+		UPackage::SavePackage(MaterialPackage, Material, *PackageFilename, SaveArgs);
+
+		// Apply to the actor's static mesh component
+		UStaticMeshComponent* MeshComp = Actor->FindComponentByClass<UStaticMeshComponent>();
+		if (MeshComp)
+		{
+			MeshComp->SetMaterial(0, Material);
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":true,\"actor_id\":\"%s\",\"material_path\":\"%s\"}"),
+				*ActorId, *MaterialPackagePath);
+		}
+		else
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Actor %s has no StaticMeshComponent\"}"),
+				*ActorId);
+		}
 
 		DoneEvent->Trigger();
 	});

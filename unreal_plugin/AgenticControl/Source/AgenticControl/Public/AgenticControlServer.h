@@ -44,6 +44,12 @@ private:
 	/** Handle set_transform command. Returns JSON response. */
 	FString HandleSetTransform(const TSharedPtr<FJsonObject>& Params);
 
+	/** Handle import_asset command. Imports a file from disk into /Game/Generated/. */
+	FString HandleImportAsset(const TSharedPtr<FJsonObject>& Params);
+
+	/** Handle apply_material command. Creates a material from a texture and applies it to an actor. */
+	FString HandleApplyMaterial(const TSharedPtr<FJsonObject>& Params);
+
 	/** Map a string actor type name to its UClass*. Returns nullptr for unknown types. */
 	static UClass* GetActorClassFromType(const FString& ActorType);
 
