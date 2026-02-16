@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Agentic Control",
+	"Description": "TCP server plugin for AI agent control of the Unreal Engine Editor",
+	"Category": "Editor",
+	"CreatedBy": "",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Modules": [
+		{
+			"Name": "AgenticControl",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}
