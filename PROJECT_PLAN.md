@@ -235,16 +235,16 @@ unreal-engine-agentic-control/
 
 ## 7. Development Phases
 
-### Phase 1 — Foundation
-- [ ] Set up Python project structure and dependencies.
-- [ ] Build the UE TCP socket plugin (listen, parse, respond).
-- [ ] Implement the MCP server with a minimal tool set (`spawn_actor`, `get_scene_info`).
-- [ ] Verify end-to-end: MCP tool call → TCP → actor spawns in UE.
+### Phase 1 — Foundation ✅
+- [x] Set up Python project structure and dependencies.
+- [x] Build the UE TCP socket plugin (listen, parse, respond).
+- [x] Implement the MCP server with a minimal tool set (`spawn_actor`, `get_scene_info`).
+- [x] Verify end-to-end: MCP tool call → TCP → actor spawns in UE.
 
 ### Phase 2 — Single-Step Agent Tasks
-- [ ] Implement the UE Editor Agent with MCP tool access.
-- [ ] Implement the Orchestrator Agent with delegation to the UE Editor Agent.
-- [ ] Support single-step natural language commands (add / move / delete actors).
+- [x] Implement the UE Editor Agent with MCP tool access.
+- [x] Implement the Orchestrator Agent with delegation to the UE Editor Agent.
+- [x] Support single-step natural language commands (add / move / delete actors).
 
 ### Phase 3 — Image Generation & Multi-Step Tasks
 - [ ] Implement the Image Gen Agent (Imagen 4).

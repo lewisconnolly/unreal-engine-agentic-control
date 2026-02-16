@@ -12,7 +12,8 @@ public class AgenticControl : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"Sockets",
-			"Networking"
+			"Networking",
+			"UnrealEd"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

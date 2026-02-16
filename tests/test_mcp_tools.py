@@ -27,6 +27,30 @@ def _mock_send_command(command: str, params: dict | None = None) -> dict:
         }
     elif command == "get_scene_info":
         return {"success": True, "actors": []}
+    elif command == "delete_actor":
+        actor_id = params.get("actor_id", "") if params else ""
+        return {"success": True, "actor_id": actor_id}
+    elif command == "set_transform":
+        actor_id = params.get("actor_id", "") if params else ""
+        # Echo back the params as the transform to verify they were passed through
+        transform = {
+            "location": {
+                "x": params.get("x", 0.0),
+                "y": params.get("y", 0.0),
+                "z": params.get("z", 0.0),
+            },
+            "rotation": {
+                "pitch": params.get("pitch", 0.0),
+                "yaw": params.get("yaw", 0.0),
+                "roll": params.get("roll", 0.0),
+            },
+            "scale": {
+                "x": params.get("scale_x", 1.0),
+                "y": params.get("scale_y", 1.0),
+                "z": params.get("scale_z", 1.0),
+            },
+        }
+        return {"success": True, "actor_id": actor_id, "transform": transform}
     return {"success": False, "error": "Unknown command"}
 
 
@@ -85,3 +109,74 @@ async def test_spawn_actor_different_types(mock_tcp):
         assert data["success"] is True
         assert data["actor_id"] == "PointLight_1"
         assert data["actor_type"] == "PointLight"
+
+
+@pytest.mark.asyncio
+async def test_delete_actor(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("delete_actor", {
+            "actor_id": "Cube_1",
+        })
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["actor_id"] == "Cube_1"
+
+    mock_tcp.assert_called_once_with("delete_actor", {"actor_id": "Cube_1"})
+
+
+@pytest.mark.asyncio
+async def test_set_transform_location_only(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("set_transform", {
+            "actor_id": "Cube_1",
+            "x": 500.0,
+            "z": 200.0,
+        })
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["actor_id"] == "Cube_1"
+        assert data["transform"]["location"]["x"] == 500.0
+        assert data["transform"]["location"]["z"] == 200.0
+
+    # Only non-None params should be sent (actor_id + x + z)
+    mock_tcp.assert_called_once_with("set_transform", {
+        "actor_id": "Cube_1",
+        "x": 500.0,
+        "z": 200.0,
+    })
+
+
+@pytest.mark.asyncio
+async def test_set_transform_full(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("set_transform", {
+            "actor_id": "Cube_1",
+            "x": 100.0,
+            "y": 200.0,
+            "z": 300.0,
+            "yaw": 45.0,
+            "pitch": 10.0,
+            "roll": 0.0,
+            "scale_x": 2.0,
+            "scale_y": 2.0,
+            "scale_z": 2.0,
+        })
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["actor_id"] == "Cube_1"
+        assert data["transform"]["location"]["x"] == 100.0
+        assert data["transform"]["rotation"]["yaw"] == 45.0
+        assert data["transform"]["scale"]["x"] == 2.0
+
+    mock_tcp.assert_called_once_with("set_transform", {
+        "actor_id": "Cube_1",
+        "x": 100.0,
+        "y": 200.0,
+        "z": 300.0,
+        "yaw": 45.0,
+        "pitch": 10.0,
+        "roll": 0.0,
+        "scale_x": 2.0,
+        "scale_y": 2.0,
+        "scale_z": 2.0,
+    })

@@ -10,6 +10,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from agents.orchestrator.agent import orchestrator_agent
+from agents.ue_editor.agent import ue_editor_toolset
 
 APP_NAME = "unreal_agentic_control"
 USER_ID = "local_user"
@@ -31,13 +32,16 @@ async def main() -> None:
     )
 
     print("Unreal Engine Agentic Control")
-    print("Type your request (Ctrl+C to quit)\n")
+    print("Type your request (exit/quit to stop)\n")
 
     try:
         while True:
             user_input = input("> ").strip()
             if not user_input:
                 continue
+
+            if user_input.lower() in ("exit", "quit", "/quit"):
+                break
 
             content = types.Content(
                 role="user",
@@ -51,10 +55,13 @@ async def main() -> None:
             ):
                 if event.content and event.content.parts:
                     for part in event.content.parts:
-                        if part.text:
+                        if hasattr(part, "text") and part.text:
                             print(part.text)
     except KeyboardInterrupt:
         print("\nShutting down.")
+    finally:
+        await ue_editor_toolset.close()
+        print("Disconnected.")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,18 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 
+#include "Engine/StaticMeshActor.h"
+#include "Engine/PointLight.h"
+#include "Engine/SpotLight.h"
+#include "Engine/DirectionalLight.h"
+#include "Camera/CameraActor.h"
+#include "GameFramework/PlayerStart.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "EngineUtils.h"
+#include "Editor.h"
+#include "Async/Async.h"
+
 FAgenticControlServer::FAgenticControlServer(int32 InPort)
 	: Port(InPort)
 {
@@ -24,6 +36,11 @@ void FAgenticControlServer::Start()
 void FAgenticControlServer::Stop()
 {
 	bStopping = true;
+
+	if (ClientSocket)
+	{
+		ClientSocket->Close();
+	}
 
 	if (ListenerSocket)
 	{
@@ -78,7 +95,7 @@ uint32 FAgenticControlServer::Run()
 		}
 
 		TSharedRef<FInternetAddr> RemoteAddr = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateInternetAddr();
-		FSocket* ClientSocket = ListenerSocket->Accept(*RemoteAddr, TEXT("AgenticControlClient"));
+		ClientSocket = ListenerSocket->Accept(*RemoteAddr, TEXT("AgenticControlClient"));
 
 		if (!ClientSocket)
 		{
@@ -93,9 +110,26 @@ uint32 FAgenticControlServer::Run()
 
 		while (!bStopping)
 		{
+			// Check if the client is still connected
+			ESocketConnectionState ConnState = ClientSocket->GetConnectionState();
+			if (ConnState == SCS_ConnectionError)
+			{
+				UE_LOG(LogTemp, Log, TEXT("AgenticControl: Client connection lost"));
+				break;
+			}
+
 			uint32 PendingDataSize = 0;
 			if (!ClientSocket->HasPendingData(PendingDataSize))
 			{
+				// No data available — do a zero-byte Recv to detect disconnect.
+				// On a cleanly-closed TCP socket, Recv returns 0.
+				uint8 Probe = 0;
+				int32 ProbeRead = 0;
+				if (!ClientSocket->Recv(&Probe, 0, ProbeRead, ESocketReceiveFlags::Peek))
+				{
+					UE_LOG(LogTemp, Log, TEXT("AgenticControl: Client disconnected (recv failed)"));
+					break;
+				}
 				FPlatformProcess::Sleep(0.01f);
 				continue;
 			}
@@ -130,6 +164,7 @@ uint32 FAgenticControlServer::Run()
 
 		ClientSocket->Close();
 		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
+		ClientSocket = nullptr;
 		UE_LOG(LogTemp, Log, TEXT("AgenticControl: Client disconnected"));
 	}
 
@@ -139,6 +174,62 @@ uint32 FAgenticControlServer::Run()
 void FAgenticControlServer::Exit()
 {
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+UClass* FAgenticControlServer::GetActorClassFromType(const FString& ActorType)
+{
+	static const TMap<FString, UClass*> TypeMap = {
+		{ TEXT("StaticMeshActor"), AStaticMeshActor::StaticClass() },
+		{ TEXT("PointLight"),      APointLight::StaticClass() },
+		{ TEXT("SpotLight"),       ASpotLight::StaticClass() },
+		{ TEXT("DirectionalLight"),ADirectionalLight::StaticClass() },
+		{ TEXT("CameraActor"),     ACameraActor::StaticClass() },
+		{ TEXT("PlayerStart"),     APlayerStart::StaticClass() },
+	};
+
+	const UClass* const* Found = TypeMap.Find(ActorType);
+	return Found ? const_cast<UClass*>(*Found) : nullptr;
+}
+
+AActor* FAgenticControlServer::FindActorByLabel(UWorld* World, const FString& ActorLabel)
+{
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->GetActorLabel() == ActorLabel)
+		{
+			return *It;
+		}
+	}
+	return nullptr;
+}
+
+FString FAgenticControlServer::SerializeTransform(const FTransform& Transform)
+{
+	const FVector& Loc = Transform.GetLocation();
+	const FRotator Rot = Transform.Rotator();
+	const FVector& Scale = Transform.GetScale3D();
+
+	return FString::Printf(
+		TEXT("{\"location\":{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f},"
+			 "\"rotation\":{\"pitch\":%.2f,\"yaw\":%.2f,\"roll\":%.2f},"
+			 "\"scale\":{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f}}"),
+		Loc.X, Loc.Y, Loc.Z,
+		Rot.Pitch, Rot.Yaw, Rot.Roll,
+		Scale.X, Scale.Y, Scale.Z
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Command router
+// ---------------------------------------------------------------------------
 
 FString FAgenticControlServer::HandleCommand(const FString& JsonCommand)
 {
@@ -156,9 +247,10 @@ FString FAgenticControlServer::HandleCommand(const FString& JsonCommand)
 		return TEXT("{\"success\":false,\"error\":\"Missing command field\"}");
 	}
 
+	const TSharedPtr<FJsonObject>* ParamsPtr = nullptr;
+
 	if (Command == TEXT("spawn_actor"))
 	{
-		const TSharedPtr<FJsonObject>* ParamsPtr = nullptr;
 		if (JsonObject->TryGetObjectField(TEXT("params"), ParamsPtr) && ParamsPtr)
 		{
 			return HandleSpawnActor(*ParamsPtr);
@@ -169,14 +261,32 @@ FString FAgenticControlServer::HandleCommand(const FString& JsonCommand)
 	{
 		return HandleGetSceneInfo();
 	}
+	else if (Command == TEXT("delete_actor"))
+	{
+		if (JsonObject->TryGetObjectField(TEXT("params"), ParamsPtr) && ParamsPtr)
+		{
+			return HandleDeleteActor(*ParamsPtr);
+		}
+		return TEXT("{\"success\":false,\"error\":\"Missing params for delete_actor\"}");
+	}
+	else if (Command == TEXT("set_transform"))
+	{
+		if (JsonObject->TryGetObjectField(TEXT("params"), ParamsPtr) && ParamsPtr)
+		{
+			return HandleSetTransform(*ParamsPtr);
+		}
+		return TEXT("{\"success\":false,\"error\":\"Missing params for set_transform\"}");
+	}
 
 	return TEXT("{\"success\":false,\"error\":\"Unknown command\"}");
 }
 
+// ---------------------------------------------------------------------------
+// spawn_actor — dispatches to game thread, spawns a real actor
+// ---------------------------------------------------------------------------
+
 FString FAgenticControlServer::HandleSpawnActor(const TSharedPtr<FJsonObject>& Params)
 {
-	// Stub implementation — returns a hardcoded success response.
-	// Real UE API calls will be wired up in a follow-up phase.
 	FString ActorType;
 	Params->TryGetStringField(TEXT("actor_type"), ActorType);
 
@@ -188,21 +298,250 @@ FString FAgenticControlServer::HandleSpawnActor(const TSharedPtr<FJsonObject>& P
 	UE_LOG(LogTemp, Log, TEXT("AgenticControl: spawn_actor type=%s pos=(%.1f, %.1f, %.1f)"),
 		*ActorType, X, Y, Z);
 
-	// TODO: Dispatch to game thread and actually spawn the actor
-	// AsyncTask(ENamedThreads::GameThread, [=]() { ... });
+	FString ResultJson;
+	FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool();
 
-	return FString::Printf(
-		TEXT("{\"success\":true,\"actor_id\":\"%s_1\",\"actor_type\":\"%s\",\"position\":{\"x\":%.1f,\"y\":%.1f,\"z\":%.1f}}"),
-		*ActorType, *ActorType, X, Y, Z
-	);
+	AsyncTask(ENamedThreads::GameThread, [&]()
+	{
+		UWorld* World = GEditor->GetEditorWorldContext().World();
+		if (!World)
+		{
+			ResultJson = TEXT("{\"success\":false,\"error\":\"No editor world available\"}");
+			DoneEvent->Trigger();
+			return;
+		}
+
+		UClass* ActorClass = GetActorClassFromType(ActorType);
+		if (!ActorClass)
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Unknown actor type: %s\"}"), *ActorType);
+			DoneEvent->Trigger();
+			return;
+		}
+
+		FVector Location(X, Y, Z);
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		AActor* NewActor = World->SpawnActor(ActorClass, &Location, nullptr, SpawnParams);
+		if (!NewActor)
+		{
+			ResultJson = TEXT("{\"success\":false,\"error\":\"SpawnActor returned null\"}");
+			DoneEvent->Trigger();
+			return;
+		}
+
+		// For StaticMeshActor, assign a default cube mesh so it's visible
+		if (AStaticMeshActor* MeshActor = Cast<AStaticMeshActor>(NewActor))
+		{
+			UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(
+				nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+			if (CubeMesh && MeshActor->GetStaticMeshComponent())
+			{
+				MeshActor->GetStaticMeshComponent()->SetStaticMesh(CubeMesh);
+			}
+		}
+
+		FString ActorLabel = NewActor->GetActorLabel();
+		FString Transform = SerializeTransform(NewActor->GetActorTransform());
+
+		ResultJson = FString::Printf(
+			TEXT("{\"success\":true,\"actor_id\":\"%s\",\"actor_type\":\"%s\",\"transform\":%s}"),
+			*ActorLabel, *ActorType, *Transform);
+
+		DoneEvent->Trigger();
+	});
+
+	DoneEvent->Wait();
+	FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+
+	return ResultJson;
 }
+
+// ---------------------------------------------------------------------------
+// get_scene_info — dispatches to game thread, iterates all actors
+// ---------------------------------------------------------------------------
 
 FString FAgenticControlServer::HandleGetSceneInfo()
 {
-	// Stub implementation — returns an empty actor list.
-	// Real UE API calls will be wired up in a follow-up phase.
 	UE_LOG(LogTemp, Log, TEXT("AgenticControl: get_scene_info"));
 
-	// TODO: Dispatch to game thread and query actual scene
-	return TEXT("{\"success\":true,\"actors\":[]}");
+	FString ResultJson;
+	FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool();
+
+	AsyncTask(ENamedThreads::GameThread, [&]()
+	{
+		UWorld* World = GEditor->GetEditorWorldContext().World();
+		if (!World)
+		{
+			ResultJson = TEXT("{\"success\":false,\"error\":\"No editor world available\"}");
+			DoneEvent->Trigger();
+			return;
+		}
+
+		FString ActorsArray = TEXT("[");
+		bool bFirst = true;
+
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (!Actor)
+			{
+				continue;
+			}
+
+			if (!bFirst)
+			{
+				ActorsArray += TEXT(",");
+			}
+			bFirst = false;
+
+			FString Label = Actor->GetActorLabel();
+			FString ClassName = Actor->GetClass()->GetName();
+			FString Transform = SerializeTransform(Actor->GetActorTransform());
+
+			ActorsArray += FString::Printf(
+				TEXT("{\"actor_id\":\"%s\",\"class\":\"%s\",\"transform\":%s}"),
+				*Label, *ClassName, *Transform);
+		}
+
+		ActorsArray += TEXT("]");
+		ResultJson = FString::Printf(TEXT("{\"success\":true,\"actors\":%s}"), *ActorsArray);
+
+		DoneEvent->Trigger();
+	});
+
+	DoneEvent->Wait();
+	FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+
+	return ResultJson;
+}
+
+// ---------------------------------------------------------------------------
+// delete_actor — dispatches to game thread, destroys actor by label
+// ---------------------------------------------------------------------------
+
+FString FAgenticControlServer::HandleDeleteActor(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorId;
+	Params->TryGetStringField(TEXT("actor_id"), ActorId);
+
+	UE_LOG(LogTemp, Log, TEXT("AgenticControl: delete_actor id=%s"), *ActorId);
+
+	FString ResultJson;
+	FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool();
+
+	AsyncTask(ENamedThreads::GameThread, [&]()
+	{
+		UWorld* World = GEditor->GetEditorWorldContext().World();
+		if (!World)
+		{
+			ResultJson = TEXT("{\"success\":false,\"error\":\"No editor world available\"}");
+			DoneEvent->Trigger();
+			return;
+		}
+
+		AActor* Actor = FindActorByLabel(World, ActorId);
+		if (!Actor)
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Actor not found: %s\"}"), *ActorId);
+			DoneEvent->Trigger();
+			return;
+		}
+
+		bool bDestroyed = World->DestroyActor(Actor);
+		if (bDestroyed)
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":true,\"actor_id\":\"%s\"}"), *ActorId);
+		}
+		else
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Failed to destroy actor: %s\"}"), *ActorId);
+		}
+
+		DoneEvent->Trigger();
+	});
+
+	DoneEvent->Wait();
+	FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+
+	return ResultJson;
+}
+
+// ---------------------------------------------------------------------------
+// set_transform — dispatches to game thread, applies partial transform update
+// ---------------------------------------------------------------------------
+
+FString FAgenticControlServer::HandleSetTransform(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorId;
+	Params->TryGetStringField(TEXT("actor_id"), ActorId);
+
+	UE_LOG(LogTemp, Log, TEXT("AgenticControl: set_transform id=%s"), *ActorId);
+
+	FString ResultJson;
+	FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool();
+
+	// Capture param values on this thread before dispatching
+	TSharedPtr<FJsonObject> ParamsCopy = Params;
+
+	AsyncTask(ENamedThreads::GameThread, [&ResultJson, &ActorId, ParamsCopy, DoneEvent]()
+	{
+		UWorld* World = GEditor->GetEditorWorldContext().World();
+		if (!World)
+		{
+			ResultJson = TEXT("{\"success\":false,\"error\":\"No editor world available\"}");
+			DoneEvent->Trigger();
+			return;
+		}
+
+		AActor* Actor = FindActorByLabel(World, ActorId);
+		if (!Actor)
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Actor not found: %s\"}"), *ActorId);
+			DoneEvent->Trigger();
+			return;
+		}
+
+		FTransform CurrentTransform = Actor->GetActorTransform();
+		FVector Location = CurrentTransform.GetLocation();
+		FRotator Rotation = CurrentTransform.Rotator();
+		FVector Scale = CurrentTransform.GetScale3D();
+
+		// Apply only provided params (partial update)
+		double Val;
+		if (ParamsCopy->TryGetNumberField(TEXT("x"), Val))       Location.X = Val;
+		if (ParamsCopy->TryGetNumberField(TEXT("y"), Val))       Location.Y = Val;
+		if (ParamsCopy->TryGetNumberField(TEXT("z"), Val))       Location.Z = Val;
+		if (ParamsCopy->TryGetNumberField(TEXT("yaw"), Val))     Rotation.Yaw = Val;
+		if (ParamsCopy->TryGetNumberField(TEXT("pitch"), Val))   Rotation.Pitch = Val;
+		if (ParamsCopy->TryGetNumberField(TEXT("roll"), Val))    Rotation.Roll = Val;
+		if (ParamsCopy->TryGetNumberField(TEXT("scale_x"), Val)) Scale.X = Val;
+		if (ParamsCopy->TryGetNumberField(TEXT("scale_y"), Val)) Scale.Y = Val;
+		if (ParamsCopy->TryGetNumberField(TEXT("scale_z"), Val)) Scale.Z = Val;
+
+		FTransform NewTransform;
+		NewTransform.SetLocation(Location);
+		NewTransform.SetRotation(Rotation.Quaternion());
+		NewTransform.SetScale3D(Scale);
+
+		Actor->SetActorTransform(NewTransform);
+
+		FString Transform = SerializeTransform(Actor->GetActorTransform());
+		ResultJson = FString::Printf(
+			TEXT("{\"success\":true,\"actor_id\":\"%s\",\"transform\":%s}"),
+			*ActorId, *Transform);
+
+		DoneEvent->Trigger();
+	});
+
+	DoneEvent->Wait();
+	FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+
+	return ResultJson;
 }

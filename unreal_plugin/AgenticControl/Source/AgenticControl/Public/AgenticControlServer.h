@@ -38,8 +38,24 @@ private:
 	/** Handle get_scene_info command. Returns JSON response. */
 	FString HandleGetSceneInfo();
 
+	/** Handle delete_actor command. Returns JSON response. */
+	FString HandleDeleteActor(const TSharedPtr<FJsonObject>& Params);
+
+	/** Handle set_transform command. Returns JSON response. */
+	FString HandleSetTransform(const TSharedPtr<FJsonObject>& Params);
+
+	/** Map a string actor type name to its UClass*. Returns nullptr for unknown types. */
+	static UClass* GetActorClassFromType(const FString& ActorType);
+
+	/** Find an actor in the world by its display label. Returns nullptr if not found. */
+	static AActor* FindActorByLabel(UWorld* World, const FString& ActorLabel);
+
+	/** Serialize an FTransform to a JSON object string with location/rotation/scale. */
+	static FString SerializeTransform(const FTransform& Transform);
+
 	int32 Port;
 	FSocket* ListenerSocket = nullptr;
+	FSocket* ClientSocket = nullptr;
 	FRunnableThread* Thread = nullptr;
 	FThreadSafeBool bStopping = false;
 };
