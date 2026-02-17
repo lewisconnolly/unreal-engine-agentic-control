@@ -20,7 +20,7 @@ public class AgenticControl : ModuleRules
 		{
 			"Json",
 			"JsonUtilities",
-			"AssetTools"
+			"AssetRegistry"
 		});
 	}
 }

@@ -17,14 +17,12 @@
 #include "EngineUtils.h"
 #include "Editor.h"
 #include "Async/Async.h"
-#include "AssetToolsModule.h"
-#include "IAssetTools.h"
-#include "AutomatedAssetImportData.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionTextureSample.h"
 #include "Factories/TextureFactory.h"
 #include "Engine/Texture2D.h"
 #include "UObject/SavePackage.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 
 FAgenticControlServer::FAgenticControlServer(int32 InPort)
 	: Port(InPort)
@@ -589,19 +587,38 @@ FString FAgenticControlServer::HandleImportAsset(const TSharedPtr<FJsonObject>& 
 
 	AsyncTask(ENamedThreads::GameThread, [&ResultJson, FilePath, AssetName, DoneEvent]()
 	{
-		FString DestinationPath = FString::Printf(TEXT("/Game/Generated/%s"), *AssetName);
+		// Use UTextureFactory directly instead of ImportAssetsAutomated.
+		// The Interchange pipeline used by ImportAssetsAutomated pumps GameThread
+		// tasks internally, which triggers a task-graph recursion guard assertion
+		// when we are already executing inside a GameThread AsyncTask.
 
-		UAutomatedAssetImportData* ImportData = NewObject<UAutomatedAssetImportData>();
-		ImportData->Filenames.Add(FilePath);
-		ImportData->DestinationPath = TEXT("/Game/Generated");
-		ImportData->bReplaceExisting = true;
+		FString PackagePath = FString::Printf(TEXT("/Game/Generated/%s"), *AssetName);
+		UPackage* Package = CreatePackage(*PackagePath);
+		Package->FullyLoad();
 
-		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
-		TArray<UObject*> ImportedAssets = AssetTools.ImportAssetsAutomated(ImportData);
+		UTextureFactory* Factory = NewObject<UTextureFactory>();
+		Factory->AddToRoot(); // prevent GC during import
 
-		if (ImportedAssets.Num() > 0 && ImportedAssets[0])
+		bool bCancelled = false;
+		UObject* ImportedObj = Factory->FactoryCreateFile(
+			UTexture2D::StaticClass(),
+			Package,
+			FName(*AssetName),
+			RF_Public | RF_Standalone,
+			FilePath,
+			nullptr,  // Parms
+			GWarn,
+			bCancelled
+		);
+
+		Factory->RemoveFromRoot();
+
+		if (ImportedObj && !bCancelled)
 		{
-			FString AssetPath = ImportedAssets[0]->GetPathName();
+			FAssetRegistryModule::AssetCreated(ImportedObj);
+			Package->MarkPackageDirty();
+
+			FString AssetPath = ImportedObj->GetPathName();
 			ResultJson = FString::Printf(
 				TEXT("{\"success\":true,\"asset_path\":\"%s\"}"), *AssetPath);
 		}
