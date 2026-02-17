@@ -202,5 +202,26 @@ async def set_visibility(actor_id: str, visible: bool) -> str:
     return json.dumps(result)
 
 
+@mcp.tool
+async def set_light_intensity(actor_id: str, intensity: float) -> str:
+    """Set the brightness of a light actor.
+
+    Works with PointLight, SpotLight, DirectionalLight, and SkyLight actors.
+    The intensity is a float scale where 1.0 = default (100%), 0.5 = 50%, 5.0 = 500%.
+
+    Args:
+        actor_id: The ID (label) of the light actor.
+        intensity: Brightness scale factor (1.0 = default intensity).
+
+    Returns:
+        JSON string with the result including the new intensity value.
+    """
+    result = await send_command("set_light_intensity", {
+        "actor_id": actor_id,
+        "intensity": intensity,
+    })
+    return json.dumps(result)
+
+
 if __name__ == "__main__":
     mcp.run()

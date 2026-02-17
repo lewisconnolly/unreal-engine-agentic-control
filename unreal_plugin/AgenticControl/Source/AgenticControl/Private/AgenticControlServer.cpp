@@ -23,6 +23,9 @@
 #include "Engine/Texture2D.h"
 #include "UObject/SavePackage.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Components/LightComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Engine/SkyLight.h"
 
 FAgenticControlServer::FAgenticControlServer(int32 InPort)
 	: Port(InPort)
@@ -314,6 +317,14 @@ FString FAgenticControlServer::HandleCommand(const FString& JsonCommand)
 			return HandleSetVisibility(*ParamsPtr);
 		}
 		return TEXT("{\"success\":false,\"error\":\"Missing params for set_visibility\"}");
+	}
+	else if (Command == TEXT("set_light_intensity"))
+	{
+		if (JsonObject->TryGetObjectField(TEXT("params"), ParamsPtr) && ParamsPtr)
+		{
+			return HandleSetLightIntensity(*ParamsPtr);
+		}
+		return TEXT("{\"success\":false,\"error\":\"Missing params for set_light_intensity\"}");
 	}
 
 	return TEXT("{\"success\":false,\"error\":\"Unknown command\"}");
@@ -868,6 +879,78 @@ FString FAgenticControlServer::HandleSetVisibility(const TSharedPtr<FJsonObject>
 			TEXT("{\"success\":true,\"actor_id\":\"%s\",\"visible\":%s}"),
 			*ActorId, bVisible ? TEXT("true") : TEXT("false"));
 
+		DoneEvent->Trigger();
+	});
+
+	DoneEvent->Wait();
+	FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+
+	return ResultJson;
+}
+
+// ---------------------------------------------------------------------------
+// set_light_intensity — dispatches to game thread, changes light brightness
+// ---------------------------------------------------------------------------
+
+FString FAgenticControlServer::HandleSetLightIntensity(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorId;
+	Params->TryGetStringField(TEXT("actor_id"), ActorId);
+
+	double Intensity = 1.0;
+	Params->TryGetNumberField(TEXT("intensity"), Intensity);
+
+	UE_LOG(LogTemp, Log, TEXT("AgenticControl: set_light_intensity id=%s intensity=%.2f"),
+		*ActorId, Intensity);
+
+	FString ResultJson;
+	FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool();
+
+	AsyncTask(ENamedThreads::GameThread, [&ResultJson, ActorId, Intensity, DoneEvent]()
+	{
+		UWorld* World = GEditor->GetEditorWorldContext().World();
+		if (!World)
+		{
+			ResultJson = TEXT("{\"success\":false,\"error\":\"No editor world available\"}");
+			DoneEvent->Trigger();
+			return;
+		}
+
+		AActor* Actor = FindActorByLabel(World, ActorId);
+		if (!Actor)
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Actor not found: %s\"}"), *ActorId);
+			DoneEvent->Trigger();
+			return;
+		}
+
+		// Try ULightComponent first (covers PointLight, SpotLight, DirectionalLight)
+		ULightComponent* LightComp = Actor->FindComponentByClass<ULightComponent>();
+		if (LightComp)
+		{
+			LightComp->SetIntensity(Intensity);
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":true,\"actor_id\":\"%s\",\"intensity\":%.2f}"),
+				*ActorId, Intensity);
+			DoneEvent->Trigger();
+			return;
+		}
+
+		// Try USkyLightComponent (SkyLight has a separate component hierarchy)
+		USkyLightComponent* SkyLightComp = Actor->FindComponentByClass<USkyLightComponent>();
+		if (SkyLightComp)
+		{
+			SkyLightComp->SetIntensity(Intensity);
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":true,\"actor_id\":\"%s\",\"intensity\":%.2f}"),
+				*ActorId, Intensity);
+			DoneEvent->Trigger();
+			return;
+		}
+
+		ResultJson = FString::Printf(
+			TEXT("{\"success\":false,\"error\":\"Actor has no light component: %s\"}"), *ActorId);
 		DoneEvent->Trigger();
 	});
 

@@ -69,6 +69,10 @@ def _mock_send_command(command: str, params: dict | None = None) -> dict:  # noq
         actor_id = params.get("actor_id", "") if params else ""
         visible = params.get("visible", True) if params else True
         return {"success": True, "actor_id": actor_id, "visible": visible}
+    elif command == "set_light_intensity":
+        actor_id = params.get("actor_id", "") if params else ""
+        intensity = params.get("intensity", 1.0) if params else 1.0
+        return {"success": True, "actor_id": actor_id, "intensity": intensity}
     elif command == "search_actors":
         query = (params.get("query", "") if params else "").lower()
         # Simulated scene for search tests
@@ -333,4 +337,40 @@ async def test_set_visibility_false(mock_tcp):
     mock_tcp.assert_called_once_with("set_visibility", {
         "actor_id": "PointLight_1",
         "visible": False,
+    })
+
+
+@pytest.mark.asyncio
+async def test_set_light_intensity_half(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("set_light_intensity", {
+            "actor_id": "PointLight_1",
+            "intensity": 0.5,
+        })
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["actor_id"] == "PointLight_1"
+        assert data["intensity"] == 0.5
+
+    mock_tcp.assert_called_once_with("set_light_intensity", {
+        "actor_id": "PointLight_1",
+        "intensity": 0.5,
+    })
+
+
+@pytest.mark.asyncio
+async def test_set_light_intensity_high(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("set_light_intensity", {
+            "actor_id": "SpotLight_1",
+            "intensity": 5.0,
+        })
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["actor_id"] == "SpotLight_1"
+        assert data["intensity"] == 5.0
+
+    mock_tcp.assert_called_once_with("set_light_intensity", {
+        "actor_id": "SpotLight_1",
+        "intensity": 5.0,
     })

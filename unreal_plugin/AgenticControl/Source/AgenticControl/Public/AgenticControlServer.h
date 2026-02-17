@@ -56,6 +56,9 @@ private:
 	/** Handle set_visibility command. Shows or hides an actor. */
 	FString HandleSetVisibility(const TSharedPtr<FJsonObject>& Params);
 
+	/** Handle set_light_intensity command. Changes a light actor's brightness. */
+	FString HandleSetLightIntensity(const TSharedPtr<FJsonObject>& Params);
+
 	/** Map a string actor type name to its UClass*. Returns nullptr for unknown types. */
 	static UClass* GetActorClassFromType(const FString& ActorType);
 
