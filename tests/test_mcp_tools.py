@@ -65,6 +65,10 @@ def _mock_send_command(command: str, params: dict | None = None) -> dict:  # noq
             "actor_id": actor_id,
             "material_path": f"/Game/Generated/M_{actor_id}",
         }
+    elif command == "set_visibility":
+        actor_id = params.get("actor_id", "") if params else ""
+        visible = params.get("visible", True) if params else True
+        return {"success": True, "actor_id": actor_id, "visible": visible}
     elif command == "search_actors":
         query = (params.get("query", "") if params else "").lower()
         # Simulated scene for search tests
@@ -294,3 +298,39 @@ async def test_search_actors_no_match(mock_tcp):
         assert data["results"] == []
 
     mock_tcp.assert_called_once_with("search_actors", {"query": "NonExistent"})
+
+
+@pytest.mark.asyncio
+async def test_set_visibility_true(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("set_visibility", {
+            "actor_id": "Cube_1",
+            "visible": True,
+        })
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["actor_id"] == "Cube_1"
+        assert data["visible"] is True
+
+    mock_tcp.assert_called_once_with("set_visibility", {
+        "actor_id": "Cube_1",
+        "visible": True,
+    })
+
+
+@pytest.mark.asyncio
+async def test_set_visibility_false(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("set_visibility", {
+            "actor_id": "PointLight_1",
+            "visible": False,
+        })
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["actor_id"] == "PointLight_1"
+        assert data["visible"] is False
+
+    mock_tcp.assert_called_once_with("set_visibility", {
+        "actor_id": "PointLight_1",
+        "visible": False,
+    })

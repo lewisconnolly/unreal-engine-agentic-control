@@ -53,6 +53,9 @@ private:
 	/** Handle search_actors command. Searches actors by substring match on label or class name. */
 	FString HandleSearchActors(const TSharedPtr<FJsonObject>& Params);
 
+	/** Handle set_visibility command. Shows or hides an actor. */
+	FString HandleSetVisibility(const TSharedPtr<FJsonObject>& Params);
+
 	/** Map a string actor type name to its UClass*. Returns nullptr for unknown types. */
 	static UClass* GetActorClassFromType(const FString& ActorType);
 

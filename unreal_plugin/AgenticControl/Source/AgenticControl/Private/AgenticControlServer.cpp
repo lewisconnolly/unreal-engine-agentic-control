@@ -307,6 +307,14 @@ FString FAgenticControlServer::HandleCommand(const FString& JsonCommand)
 		}
 		return TEXT("{\"success\":false,\"error\":\"Missing params for search_actors\"}");
 	}
+	else if (Command == TEXT("set_visibility"))
+	{
+		if (JsonObject->TryGetObjectField(TEXT("params"), ParamsPtr) && ParamsPtr)
+		{
+			return HandleSetVisibility(*ParamsPtr);
+		}
+		return TEXT("{\"success\":false,\"error\":\"Missing params for set_visibility\"}");
+	}
 
 	return TEXT("{\"success\":false,\"error\":\"Unknown command\"}");
 }
@@ -800,6 +808,65 @@ FString FAgenticControlServer::HandleSearchActors(const TSharedPtr<FJsonObject>&
 		ResultJson = FString::Printf(
 			TEXT("{\"success\":true,\"query\":\"%s\",\"results\":%s}"),
 			*Query, *ResultsArray);
+
+		DoneEvent->Trigger();
+	});
+
+	DoneEvent->Wait();
+	FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+
+	return ResultJson;
+}
+
+// ---------------------------------------------------------------------------
+// set_visibility — dispatches to game thread, shows or hides an actor
+// ---------------------------------------------------------------------------
+
+FString FAgenticControlServer::HandleSetVisibility(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorId;
+	Params->TryGetStringField(TEXT("actor_id"), ActorId);
+
+	bool bVisible = true;
+	Params->TryGetBoolField(TEXT("visible"), bVisible);
+
+	UE_LOG(LogTemp, Log, TEXT("AgenticControl: set_visibility id=%s visible=%s"),
+		*ActorId, bVisible ? TEXT("true") : TEXT("false"));
+
+	FString ResultJson;
+	FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool();
+
+	AsyncTask(ENamedThreads::GameThread, [&ResultJson, ActorId, bVisible, DoneEvent]()
+	{
+		UWorld* World = GEditor->GetEditorWorldContext().World();
+		if (!World)
+		{
+			ResultJson = TEXT("{\"success\":false,\"error\":\"No editor world available\"}");
+			DoneEvent->Trigger();
+			return;
+		}
+
+		AActor* Actor = FindActorByLabel(World, ActorId);
+		if (!Actor)
+		{
+			ResultJson = FString::Printf(
+				TEXT("{\"success\":false,\"error\":\"Actor not found: %s\"}"), *ActorId);
+			DoneEvent->Trigger();
+			return;
+		}
+
+		// In-game visibility (e.g. Play-In-Editor)
+		Actor->SetActorHiddenInGame(!bVisible);
+
+		// Editor viewport visibility — propagate to all child components
+		if (USceneComponent* Root = Actor->GetRootComponent())
+		{
+			Root->SetVisibility(bVisible, /*bPropagateToChildren=*/ true);
+		}
+
+		ResultJson = FString::Printf(
+			TEXT("{\"success\":true,\"actor_id\":\"%s\",\"visible\":%s}"),
+			*ActorId, bVisible ? TEXT("true") : TEXT("false"));
 
 		DoneEvent->Trigger();
 	});

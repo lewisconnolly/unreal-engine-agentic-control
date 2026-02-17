@@ -184,5 +184,23 @@ async def search_actors(query: str) -> str:
     return json.dumps(result)
 
 
+@mcp.tool
+async def set_visibility(actor_id: str, visible: bool) -> str:
+    """Show or hide an actor in the scene.
+
+    Args:
+        actor_id: The ID (label) of the actor to show or hide.
+        visible: True to make the actor visible, False to hide it.
+
+    Returns:
+        JSON string with the result including the new visibility state.
+    """
+    result = await send_command("set_visibility", {
+        "actor_id": actor_id,
+        "visible": visible,
+    })
+    return json.dumps(result)
+
+
 if __name__ == "__main__":
     mcp.run()
