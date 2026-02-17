@@ -8,7 +8,7 @@ from agents.ue_editor.agent import ue_editor_agent
 from agents.image_gen.agent import image_gen_agent
 
 orchestrator_agent = LlmAgent(
-    model="gemini-2.5-flash",
+    model="gemini-3-flash-preview",
     name="orchestrator",
     instruction=(
         "You are the Orchestrator. You receive natural language requests from the user "

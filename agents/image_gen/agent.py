@@ -40,7 +40,7 @@ def generate_image(prompt: str, filename: str) -> str:
 
 
 image_gen_agent = LlmAgent(
-    model="gemini-2.5-flash",
+    model="gemini-3-flash-preview",
     name="image_gen",
     instruction=(
         "You are the Image Generation agent. You generate images from text descriptions "

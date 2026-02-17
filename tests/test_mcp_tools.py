@@ -65,6 +65,34 @@ def _mock_send_command(command: str, params: dict | None = None) -> dict:  # noq
             "actor_id": actor_id,
             "material_path": f"/Game/Generated/M_{actor_id}",
         }
+    elif command == "search_actors":
+        query = (params.get("query", "") if params else "").lower()
+        # Simulated scene for search tests
+        scene = [
+            {
+                "actor_id": "Cube_1",
+                "class": "StaticMeshActor",
+                "transform": {
+                    "location": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "rotation": {"pitch": 0.0, "yaw": 0.0, "roll": 0.0},
+                    "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+                },
+            },
+            {
+                "actor_id": "PointLight_1",
+                "class": "PointLight",
+                "transform": {
+                    "location": {"x": 100.0, "y": 0.0, "z": 200.0},
+                    "rotation": {"pitch": 0.0, "yaw": 0.0, "roll": 0.0},
+                    "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+                },
+            },
+        ]
+        results = [
+            actor for actor in scene
+            if query in actor["actor_id"].lower() or query in actor["class"].lower()
+        ]
+        return {"success": True, "query": params.get("query", ""), "results": results}
     return {"success": False, "error": "Unknown command"}
 
 
@@ -229,3 +257,40 @@ async def test_apply_material(mock_tcp):
         "actor_id": "Floor_1",
         "texture_asset_path": "/Game/Generated/brick_wall",
     })
+
+
+@pytest.mark.asyncio
+async def test_search_actors_by_label(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("search_actors", {"query": "Cube"})
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["query"] == "Cube"
+        assert len(data["results"]) == 1
+        assert data["results"][0]["actor_id"] == "Cube_1"
+
+    mock_tcp.assert_called_once_with("search_actors", {"query": "Cube"})
+
+
+@pytest.mark.asyncio
+async def test_search_actors_by_class(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("search_actors", {"query": "PointLight"})
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert len(data["results"]) == 1
+        assert data["results"][0]["actor_id"] == "PointLight_1"
+        assert data["results"][0]["class"] == "PointLight"
+
+    mock_tcp.assert_called_once_with("search_actors", {"query": "PointLight"})
+
+
+@pytest.mark.asyncio
+async def test_search_actors_no_match(mock_tcp):
+    async with Client(mcp) as client:
+        result = await client.call_tool("search_actors", {"query": "NonExistent"})
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["results"] == []
+
+    mock_tcp.assert_called_once_with("search_actors", {"query": "NonExistent"})

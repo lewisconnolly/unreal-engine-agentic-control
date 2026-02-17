@@ -50,6 +50,9 @@ private:
 	/** Handle apply_material command. Creates a material from a texture and applies it to an actor. */
 	FString HandleApplyMaterial(const TSharedPtr<FJsonObject>& Params);
 
+	/** Handle search_actors command. Searches actors by substring match on label or class name. */
+	FString HandleSearchActors(const TSharedPtr<FJsonObject>& Params);
+
 	/** Map a string actor type name to its UClass*. Returns nullptr for unknown types. */
 	static UClass* GetActorClassFromType(const FString& ActorType);
 

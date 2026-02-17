@@ -167,5 +167,22 @@ async def apply_material(actor_id: str, texture_asset_path: str) -> str:
     return json.dumps(result)
 
 
+@mcp.tool
+async def search_actors(query: str) -> str:
+    """Search for actors in the scene by name or class.
+
+    Performs a case-insensitive substring match against actor labels and class names.
+    Use this to resolve ambiguous references (e.g. "the cube", "a light") to exact actor IDs.
+
+    Args:
+        query: Search string to match against actor labels and class names.
+
+    Returns:
+        JSON string with matching actors including their IDs, classes, and transforms.
+    """
+    result = await send_command("search_actors", {"query": query})
+    return json.dumps(result)
+
+
 if __name__ == "__main__":
     mcp.run()

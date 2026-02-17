@@ -299,6 +299,14 @@ FString FAgenticControlServer::HandleCommand(const FString& JsonCommand)
 		}
 		return TEXT("{\"success\":false,\"error\":\"Missing params for apply_material\"}");
 	}
+	else if (Command == TEXT("search_actors"))
+	{
+		if (JsonObject->TryGetObjectField(TEXT("params"), ParamsPtr) && ParamsPtr)
+		{
+			return HandleSearchActors(*ParamsPtr);
+		}
+		return TEXT("{\"success\":false,\"error\":\"Missing params for search_actors\"}");
+	}
 
 	return TEXT("{\"success\":false,\"error\":\"Unknown command\"}");
 }
@@ -724,6 +732,74 @@ FString FAgenticControlServer::HandleApplyMaterial(const TSharedPtr<FJsonObject>
 				TEXT("{\"success\":false,\"error\":\"Actor %s has no StaticMeshComponent\"}"),
 				*ActorId);
 		}
+
+		DoneEvent->Trigger();
+	});
+
+	DoneEvent->Wait();
+	FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
+
+	return ResultJson;
+}
+
+// ---------------------------------------------------------------------------
+// search_actors — searches actors by substring match on label or class name
+// ---------------------------------------------------------------------------
+
+FString FAgenticControlServer::HandleSearchActors(const TSharedPtr<FJsonObject>& Params)
+{
+	FString Query;
+	Params->TryGetStringField(TEXT("query"), Query);
+
+	UE_LOG(LogTemp, Log, TEXT("AgenticControl: search_actors query=%s"), *Query);
+
+	FString ResultJson;
+	FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool();
+
+	AsyncTask(ENamedThreads::GameThread, [&ResultJson, Query, DoneEvent]()
+	{
+		UWorld* World = GEditor->GetEditorWorldContext().World();
+		if (!World)
+		{
+			ResultJson = TEXT("{\"success\":false,\"error\":\"No editor world available\"}");
+			DoneEvent->Trigger();
+			return;
+		}
+
+		FString QueryLower = Query.ToLower();
+		FString ResultsArray = TEXT("[");
+		bool bFirst = true;
+
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (!Actor)
+			{
+				continue;
+			}
+
+			FString Label = Actor->GetActorLabel();
+			FString ClassName = Actor->GetClass()->GetName();
+
+			if (Label.ToLower().Contains(QueryLower) || ClassName.ToLower().Contains(QueryLower))
+			{
+				if (!bFirst)
+				{
+					ResultsArray += TEXT(",");
+				}
+				bFirst = false;
+
+				FString Transform = SerializeTransform(Actor->GetActorTransform());
+				ResultsArray += FString::Printf(
+					TEXT("{\"actor_id\":\"%s\",\"class\":\"%s\",\"transform\":%s}"),
+					*Label, *ClassName, *Transform);
+			}
+		}
+
+		ResultsArray += TEXT("]");
+		ResultJson = FString::Printf(
+			TEXT("{\"success\":true,\"query\":\"%s\",\"results\":%s}"),
+			*Query, *ResultsArray);
 
 		DoneEvent->Trigger();
 	});

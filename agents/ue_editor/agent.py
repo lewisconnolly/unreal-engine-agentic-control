@@ -23,7 +23,7 @@ ue_editor_toolset = McpToolset(
 )
 
 ue_editor_agent = LlmAgent(
-    model="gemini-2.5-flash",
+    model="gemini-3-flash-preview",
     name="ue_editor",
     instruction=(
         "You are the Unreal Engine Editor agent. You use MCP tools to manipulate "
@@ -35,8 +35,12 @@ ue_editor_agent = LlmAgent(
         "- delete_actor: Remove an actor by its ID.\n"
         "- set_transform: Move, rotate, or scale an actor (partial updates supported).\n"
         "- import_asset: Import a file from disk into the UE project as an asset.\n"
-        "- apply_material: Apply a texture as a material to an actor's mesh.\n\n"
-        "Report results clearly and concisely."
+        "- apply_material: Apply a texture as a material to an actor's mesh.\n"
+        "- search_actors: Search for actors by name or class substring match.\n\n"
+        "When an actor is referenced ambiguously (e.g. 'the cube', 'a light'), "
+        "use search_actors first to resolve the reference to an exact actor ID "
+        "before calling other tools like delete_actor or set_transform.\n\n"
+        "Report results clearly and concisely."        
     ),
     tools=[ue_editor_toolset],
 )
